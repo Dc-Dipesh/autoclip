@@ -64,3 +64,10 @@ Each of these was found by running the thing, not by reading it:
 - **Docker jobs that found clips crashed at reframe.** `libmediapipe.so` links
   against `libEGL.so.1` and `libGLESv2.so.2`, which the slim image lacked, so
   MediaPipe failed to load. The image now installs `libegl1` and `libgles2`.
+- **Ollama silently analysed only part of each video.** Requests used Ollama's
+  default 4,096-token context, but `[index]`-tagged windows run larger (an
+  8-minute English window measured 6,443 tokens), so Ollama dropped the start of
+  the prompt. With no output cap, a 3B model could also generate until the
+  10-minute timeout. The window was skipped either way, and jobs reported "no
+  clips" or clips from one corner of the video. The context is now sized to the
+  prompt, and output is capped at 2,048 tokens.

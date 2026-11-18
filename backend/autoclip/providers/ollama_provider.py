@@ -11,6 +11,7 @@ reflects what actually produces usable selections.
 from __future__ import annotations
 
 import logging
+import math
 
 import httpx
 
@@ -32,6 +33,32 @@ RECOMMENDED_MODELS = [
 
 #: Highlight detection over an 8-minute window is slow on consumer hardware.
 _REQUEST_TIMEOUT = httpx.Timeout(600.0, connect=5.0)
+
+#: Cap on generated tokens. A complete answer — every clip with its title, hook
+#: and reason — is well under half of this. Small models in JSON mode sometimes
+#: never stop, and without a cap each runaway burns the whole request timeout
+#: (observed: ~23,000 tokens over ten minutes from a 3B model). Hitting the cap
+#: leaves truncated JSON, which the shared parse-and-retry path then handles.
+MAX_OUTPUT_TOKENS = 2048
+
+#: Ollama defaults to a 4,096-token context and silently discards the start of a
+#: longer prompt, instructions included. Every word carries an ``[index]`` tag,
+#: which makes windows token-dense: an 8-minute English window measured 6,443
+#: tokens. So the context is sized per request rather than left to the default.
+MIN_CONTEXT_TOKENS = 8192
+#: Rounding step, so similar windows share a size and Ollama needn't reload the
+#: model between them.
+CONTEXT_STEP_TOKENS = 4096
+#: Deliberately low, so the estimate errs high. Measured on llama3.2 against
+#: real windows: 2.46-3.57 characters per token across Korean and English.
+CHARS_PER_TOKEN_ESTIMATE = 2.2
+
+
+def context_size(system: str, user: str) -> int:
+    """Return an ``num_ctx`` large enough for the prompt plus a full answer."""
+    prompt_tokens = (len(system) + len(user)) / CHARS_PER_TOKEN_ESTIMATE
+    needed = prompt_tokens + MAX_OUTPUT_TOKENS
+    return max(MIN_CONTEXT_TOKENS, math.ceil(needed / CONTEXT_STEP_TOKENS) * CONTEXT_STEP_TOKENS)
 
 
 class OllamaProvider(LLMProvider):
@@ -61,7 +88,11 @@ class OllamaProvider(LLMProvider):
             # Ollama's JSON mode constrains decoding to valid JSON, which is the
             # single biggest reliability win for small local models.
             "format": "json",
-            "options": {"temperature": config.temperature},
+            "options": {
+                "temperature": config.temperature,
+                "num_ctx": context_size(system, user),
+                "num_predict": MAX_OUTPUT_TOKENS,
+            },
         }
 
         try:
@@ -87,6 +118,12 @@ class OllamaProvider(LLMProvider):
         except httpx.HTTPStatusError as exc:
             raise _translate_status(exc, self.name, self.model) from exc
 
+        if data.get("done_reason") == "length":
+            log.warning(
+                "%s stopped at the %d-token output cap; the reply is probably truncated.",
+                self.model,
+                MAX_OUTPUT_TOKENS,
+            )
         return data.get("response", "")
 
     async def health_check(self) -> ProviderStatus:
