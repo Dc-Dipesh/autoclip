@@ -217,3 +217,79 @@ class TestRegistry:
         provider = OpenAIProvider("llama-3.1", base_url="https://openrouter.ai/api/v1")
 
         assert provider.base_url == "https://openrouter.ai/api/v1"
+
+
+class TestOllamaRequest:
+    """Ollama's defaults are what broke detection on real videos.
+
+    Its 4,096-token default context silently drops the start of a longer prompt,
+    and with no output cap a small model in JSON mode can generate until the
+    request times out. Both options have to be on every request.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch: pytest.MonkeyPatch, reply: dict) -> list[dict]:
+        import httpx
+        from autoclip.providers import ollama_provider
+
+        sent: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            import json
+
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json=reply)
+
+        real_client = httpx.AsyncClient
+
+        def client(*args, **kwargs):
+            return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+        monkeypatch.setattr(ollama_provider.httpx, "AsyncClient", client)
+        return sent
+
+    async def test_sets_context_and_output_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from autoclip.providers.ollama_provider import (
+            MAX_OUTPUT_TOKENS,
+            MIN_CONTEXT_TOKENS,
+            OllamaProvider,
+        )
+
+        sent = self._capture(monkeypatch, {"response": VALID, "done_reason": "stop"})
+
+        raw = await OllamaProvider("llama3.2:3b")._complete("sys", "user", DetectionConfig())
+
+        assert raw == VALID
+        options = sent[0]["options"]
+        assert options["num_predict"] == MAX_OUTPUT_TOKENS
+        assert options["num_ctx"] >= MIN_CONTEXT_TOKENS
+
+    async def test_warns_when_the_output_cap_is_hit(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoclip.providers.ollama_provider import OllamaProvider
+
+        self._capture(monkeypatch, {"response": '{"clips": [', "done_reason": "length"})
+
+        with caplog.at_level("WARNING"):
+            await OllamaProvider("llama3.2:3b")._complete("sys", "user", DetectionConfig())
+
+        assert "output cap" in caplog.text
+
+    def test_small_prompts_get_the_minimum_context(self) -> None:
+        from autoclip.providers.ollama_provider import MIN_CONTEXT_TOKENS, context_size
+
+        assert context_size("system", "user") == MIN_CONTEXT_TOKENS
+
+    def test_context_fits_a_measured_dense_window(self) -> None:
+        """An 8-minute English window: 16,929 chars measured at 6,443 tokens."""
+        from autoclip.providers.ollama_provider import (
+            CONTEXT_STEP_TOKENS,
+            MAX_OUTPUT_TOKENS,
+            context_size,
+        )
+
+        size = context_size("s" * 3635, "u" * (16929 - 3635))
+
+        assert size >= 6443 + MAX_OUTPUT_TOKENS
+        assert size % CONTEXT_STEP_TOKENS == 0

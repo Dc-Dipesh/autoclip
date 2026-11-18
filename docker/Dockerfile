@@ -36,10 +36,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 # ffmpeg from Debian is built with libass and libx264. fonts-liberation gives
 # fontconfig a sane fallback if a caption style ever asks for a missing face.
+# libegl1 and libgles2: libmediapipe.so links against libEGL.so.1 and
+# libGLESv2.so.2, so without them the reframe stage fails to load MediaPipe.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg \
       fonts-liberation \
+      libegl1 \
       libgl1 \
+      libgles2 \
       libglib2.0-0 \
       curl \
     && rm -rf /var/lib/apt/lists/*
