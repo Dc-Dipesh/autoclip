@@ -58,3 +58,6 @@ Each of these was found by running the thing, not by reading it:
   without narrowing it, silently violating the declared aspect ratio.
 - **The preview showed different framing from the export**, centre-cropping while
   the renderer tracked the speaker.
+- **Every transcription failed on a fresh install.** faster-whisper 1.2.1 calls
+  `av.open(..., metadata_errors=...)`, which PyAV 19 removed, so resolving the
+  newest PyAV broke the transcribe stage with a `TypeError`. PyAV is capped below 19.

@@ -39,6 +39,10 @@ dependencies = [
   "yt-dlp>=2026.1.1",
   # Transcription
   "faster-whisper>=1.1",
+  # faster-whisper 1.2.1 calls av.open(..., metadata_errors=...), which PyAV 19
+  # removed — every transcription then fails with a TypeError. Lift this cap
+  # once a faster-whisper release stops passing that argument.
+  "av<19",
   # Reframe
   "mediapipe>=0.10.14",
   # No [opencv] extra: scenedetect 0.7 dropped it and now depends on
