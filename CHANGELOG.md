@@ -61,3 +61,6 @@ Each of these was found by running the thing, not by reading it:
 - **Every transcription failed on a fresh install.** faster-whisper 1.2.1 calls
   `av.open(..., metadata_errors=...)`, which PyAV 19 removed, so resolving the
   newest PyAV broke the transcribe stage with a `TypeError`. PyAV is capped below 19.
+- **Docker jobs that found clips crashed at reframe.** `libmediapipe.so` links
+  against `libEGL.so.1` and `libGLESv2.so.2`, which the slim image lacked, so
+  MediaPipe failed to load. The image now installs `libegl1` and `libgles2`.
